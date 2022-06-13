@@ -15,6 +15,19 @@ import java.util.regex.Pattern;
 
 import org.apache.kafka.connect.data.SchemaBuilder;
 
+// Oracle fix
+// >>>
+
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.util.Locale;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoField;
+import java.time.ZoneId;
+
+// <<<
+
 public class TimestampConverter implements CustomConverter<SchemaBuilder, RelationalColumn> {
 
     private static final Map<String, String> MONTH_MAP = Map.ofEntries(Map.entry("jan", "01"), Map.entry("feb", "02"),
@@ -56,6 +69,10 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
         this.simpleDatetimeFormatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         this.simpleTimeFormatter.setTimeZone(TimeZone.getTimeZone("UTC"));
 
+        System.out.printf(
+          "[TimestampConverter.configure] Finished configuring formats. this.strDatetimeFormat: %s, this.strTimeFormat: %s%n, this.debug: %s",
+          this.strDatetimeFormat, this.strTimeFormat, this.debug);
+
         if (this.debug)
             System.out.printf(
                     "[TimestampConverter.configure] Finished configuring formats. this.strDatetimeFormat: %s, this.strTimeFormat: %s%n",
@@ -68,7 +85,19 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
             System.out.printf(
                     "[TimestampConverter.converterFor] Starting to register column. column.name: %s, column.typeName: %s, column.hasDefaultValue: %s, column.defaultValue: %s, column.isOptional: %s%n",
                     column.name(), column.typeName(), column.hasDefaultValue(), column.defaultValue(), column.isOptional());
-        if (SUPPORTED_DATA_TYPES.stream().anyMatch(s -> s.equalsIgnoreCase(column.typeName()))) {
+
+        // Oracle fix: TIMESTAMP(4) will not be matched because of the extra width "(4)"
+        // >>>
+
+        String columnNameWithoutWidth = column.typeName().replaceAll("^(.+?)(\\(.+?\\))$", "$1");
+
+        // <<<
+        
+        if (SUPPORTED_DATA_TYPES.stream().anyMatch(s -> s.equalsIgnoreCase(columnNameWithoutWidth))) {
+            System.out.printf(
+              "[TimestampConverter.converterFor] Supported column. column.name: %s, column.typeName: %s, column.hasDefaultValue: %s, column.defaultValue: %s, column.isOptional: %s%n",
+              column.name(), column.typeName(), column.hasDefaultValue(), column.defaultValue(), column.isOptional());
+
             boolean isTime = "time".equalsIgnoreCase(column.typeName());
             // Use a new SchemaBuilder every time in order to avoid changing "Already set" options
             // in the schema builder between tables.
@@ -87,6 +116,8 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
                     }
                     return rawValue;
                 }
+
+                System.out.printf("[TimestampConverter.converterFor] rawValue: %s, type: %s", rawValue, rawValue.getClass().getSimpleName());
 
                 Long millis = getMillis(rawValue.toString(), isTime);
                 if (millis == null)
@@ -113,6 +144,55 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
     private Long getMillis(String timestamp, boolean isTime) {
         if (timestamp.isBlank())
             return null;
+        
+        // Oracle fix, oracle stores original function calls to the binlog and we can no longer rely on debezium converter
+        // Migrate code from: https://github.com/debezium/debezium/blob/main/debezium-connector-oracle/src/main/java/io/debezium/connector/oracle/OracleValueConverters.java
+        // >>>
+
+        final Pattern TO_TIMESTAMP = Pattern.compile("TO_TIMESTAMP\\('(.*)'\\)", Pattern.CASE_INSENSITIVE);
+        final Pattern TO_DATE = Pattern.compile("TO_DATE\\('(.*)',[ ]*'(.*)'\\)", Pattern.CASE_INSENSITIVE);
+
+        final DateTimeFormatter TIMESTAMP_AM_PM_SHORT_FORMATTER = new DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("dd-MMM-yy hh.mm.ss")
+            .optionalStart()
+            .appendPattern(".")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, false)
+            .optionalEnd()
+            .appendPattern(" a")
+            .toFormatter(Locale.ENGLISH);
+
+        final DateTimeFormatter TIMESTAMP_FORMATTER = new DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("yyyy-MM-dd HH:mm:ss")
+            .optionalStart()
+            .appendPattern(".")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, false)
+            .optionalEnd()
+            .toFormatter();
+
+        final ZoneId GMT_ZONE_ID = ZoneId.of("GMT");
+        LocalDateTime dateTime;
+
+        final Matcher toTimestampMatcher = TO_TIMESTAMP.matcher(timestamp);
+        if (toTimestampMatcher.matches()) {
+            String dateText = toTimestampMatcher.group(1);
+            if (dateText.indexOf(" AM") > 0 || dateText.indexOf(" PM") > 0) {
+                dateTime = LocalDateTime.from(TIMESTAMP_AM_PM_SHORT_FORMATTER.parse(dateText.trim()));
+            }
+            else {
+                dateTime = LocalDateTime.from(TIMESTAMP_FORMATTER.parse(dateText.trim()));
+            }
+            return dateTime.atZone(GMT_ZONE_ID).toInstant().toEpochMilli();
+        }
+
+        final Matcher toDateMatcher = TO_DATE.matcher(timestamp);
+        if (toDateMatcher.matches()) {
+            dateTime = LocalDateTime.from(TIMESTAMP_FORMATTER.parse(toDateMatcher.group(1)));
+            return dateTime.atZone(GMT_ZONE_ID).toInstant().toEpochMilli();
+        }
+
+        // <<<
 
         if (timestamp.contains(":") || timestamp.contains("-")) {
             return milliFromDateString(timestamp);
