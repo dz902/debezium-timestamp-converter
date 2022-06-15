@@ -12,6 +12,21 @@ import java.util.OptionalInt;
 import java.util.Properties;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.stream.Stream;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.util.Locale;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoField;
+import java.time.ZoneId;
+import java.sql.Date;
+
 public class TimestampConverterTests {
     private class MockRegistration<S> implements ConverterRegistration<S> {
         public Converter _converter;
@@ -67,18 +82,33 @@ public class TimestampConverterTests {
     }
 
     @ParameterizedTest
-    @CsvSource({ "date, YYYY-MM-dd, 18368, 2020-04-16", "date,, 18368, 2020-04-16", "time, mm:ss.SSS, 2230, 00:02.230",
-            "time,, 2230, 00:00:02.230", "datetime, YYYY-MM-dd, 1587042000279, 2020-04-16",
-            "datetime,, 1587042000279, 2020-04-16T13:00:00.279Z", "timestamp, YYYY-MM-dd, 1587042000279, 2020-04-16",
-            "datetime2,, 1587042000279, 2020-04-16T13:00:00.279Z", "datetime2, YYYY-MM-dd, 1587042000279, 2020-04-16",
-            "timestamp,, 1587042000279, 2020-04-16T13:00:00.279Z", "date, YYYY-MM-dd, 2019-04-19, 2019-04-19",
-            "datetime,, 2019-04-19 15:13:20.345123, 2019-04-19T15:13:20.345Z", "time,, 15:13:20, 15:13:20.000",
-            "time,HH:mm:ss, 15:13:20, 15:13:20", "timestamp,, 2019-04-19 15:13:20, 2019-04-19T15:13:20.000Z",
-            "datetime,, 19-Apr-2019 15:13:20.345123, 2019-04-19T15:13:20.345Z",
-            "datetime,, 19/04/2019 15:13:20.345123, 2019-04-19T15:13:20.345Z",
-            "datetime,, 2019-4-19 15:13:20.345123, 2019-04-19T15:13:20.345Z",
-            "datetime2,, 2019-4-19 15:13:20.345123, 2019-04-19T15:13:20.345Z",
-            "datetime,, 2019-4-19 3:1:0.345123, 2019-04-19T03:01:00.345Z", "datetime,YYYY-MM-dd,,", "timestamp,,,", "date,,,"})
+    @CsvSource(value = { "date| | TO_DATE('2021-12-31 13:27:18', 'YYYY-MM-DD HH24:MI:SS') | 2021-12-31",
+            "timestamp| yyyy-MM-dd | TO_TIMESTAMP('2000-12-31 13:27:18') | 2000-12-31",
+            "datetime | yyyy-MM-dd | 1640936125000 | 2021-12-31",
+            "datetime | YYYY-MM-dd | 915089725000 | 1999-12-31", // made wrong
+            "date| yyyy-MM-dd| 18368| 2020-04-16", 
+            "date|| 18368| 2020-04-16", 
+            "time| mm:ss.SSS| 2230| 00:02.230",
+            "time|| 2230| 00:00:02.230", 
+            "datetime| yyyy-MM-dd| 1587042000279| 2020-04-16",
+            "datetime|| 1587042000279| 2020-04-16T13:00:00.279Z",
+            "timestamp| yyyy-MM-dd| 1587042000279| 2020-04-16",
+            "datetime2|| 1587042000279| 2020-04-16T13:00:00.279Z",
+            "datetime2| yyyy-MM-dd| 1587042000279| 2020-04-16",
+            "timestamp|| 1587042000279| 2020-04-16T13:00:00.279Z",
+            "date| yyyy-MM-dd| 2019-04-19| 2019-04-19",
+            "datetime|| 2019-04-19 15:13:20.345123| 2019-04-19T15:13:20.345Z",
+            "time|| 15:13:20| 15:13:20.000",
+            "time|HH:mm:ss| 15:13:20| 15:13:20",
+            "timestamp|| 2019-04-19 15:13:20| 2019-04-19T15:13:20.000Z",
+            "datetime|| 19-Apr-2019 15:13:20.345123| 2019-04-19T15:13:20.345Z",
+            "datetime|| 19/04/2019 15:13:20.345123| 2019-04-19T15:13:20.345Z",
+            "datetime|| 2019-4-19 15:13:20.345123| 2019-04-19T15:13:20.345Z",
+            "datetime2|| 2019-4-19 15:13:20.345123| 2019-04-19T15:13:20.345Z",
+            "datetime|| 2019-4-19 3:1:0.345123| 2019-04-19T03:01:00.345Z", 
+            "datetime|yyyy-MM-dd||", 
+            "timestamp|||", "date|||"
+            }, delimiter = '|')
     void converterTest(final String columnType, final String format, final String input, final String expectedResult) {
         final TimestampConverter tsConverter = new TimestampConverter();
 
@@ -99,7 +129,7 @@ public class TimestampConverterTests {
         System.out.println(mockRegistration._schema.name());
 
         Object actualResult = mockRegistration._converter.convert(input);
-        System.out.println(actualResult);
+        System.out.printf("Actual result: %s%n", actualResult);
         if (actualResult == null) {
             assertEquals(actualResult, null, String.format(
                     "columnType: %s, format: %s, input: %s, actualTimeFormat: %s, actualDateFormat: %s, props: %s",
@@ -110,6 +140,54 @@ public class TimestampConverterTests {
                         "columnType: %s, format: %s, input: %s, actualTimeFormat: %s, actualDateFormat: %s, props: %s",
                         columnType, format, input, tsConverter.strTimeFormat, tsConverter.strDateFormat, props));
         }
+    }
+    @ParameterizedTest
+    @MethodSource("generateNativeDateObjects")
+    void converterTestNative(final String columnType, final String format, final Object input, final String expectedResult) {
+        final TimestampConverter tsConverter = new TimestampConverter();
+
+        Properties props = new Properties();
+        if (format != null)
+            props.put(
+                    String.format("format.%s",
+                            columnType.equals("timestamp") || columnType.equals("datetime2") ? "datetime" : columnType),
+                    format);
+        props.put("debug", "true");
+        tsConverter.configure(props);
+
+        RelationalColumn mockColumn = getMockColumn(columnType);
+        MockRegistration<SchemaBuilder> mockRegistration = new MockRegistration<SchemaBuilder>();
+
+        tsConverter.converterFor(mockColumn, mockRegistration);
+
+        System.out.println(mockRegistration._schema.name());
+
+        Object actualResult = mockRegistration._converter.convert(input);
+        System.out.printf("Actual result: %s%n", actualResult);
+        if (actualResult == null) {
+            assertEquals(actualResult, null, String.format(
+                    "columnType: %s, format: %s, input: %s, actualTimeFormat: %s, actualDateFormat: %s, props: %s",
+                    columnType, format, input, tsConverter.strTimeFormat, tsConverter.strDateFormat, props));
+        } else {
+        assertEquals(expectedResult, actualResult,
+                String.format(
+                        "columnType: %s, format: %s, input: %s, actualTimeFormat: %s, actualDateFormat: %s, props: %s",
+                        columnType, format, input, tsConverter.strTimeFormat, tsConverter.strDateFormat, props));
+        }
+    }
+
+    static Stream<Arguments> generateNativeDateObjects() {
+      // final String columnType, final String format, final String input, final String expectedResult
+
+      DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+      DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+      return Stream.of(
+          // will given wrong dates for 1000 or 1700 because of calendar adjustments, will have a few days diff
+          Arguments.of("date", "yyyy-MM-dd", LocalDate.parse("1900-12-31", dateFormatter), "1900-12-31"),
+          Arguments.of("date", "yyyy-MM-dd", LocalDateTime.parse("1882-06-15 10:12:00", dateTimeFormatter), "1882-06-15"),
+          Arguments.of("date", "yyyy-MM-dd", new Date(1640936125000L), "2021-12-31")
+      );
     }
 
     RelationalColumn getMockColumn(String type) {

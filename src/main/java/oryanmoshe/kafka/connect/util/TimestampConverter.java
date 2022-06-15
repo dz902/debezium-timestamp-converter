@@ -23,8 +23,20 @@ import java.time.format.DateTimeFormatterBuilder;
 import java.util.Locale;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoField;
 import java.time.ZoneId;
+
+// <<<
+
+
+// Native methods fix
+
+import java.lang.reflect.Method;
+import java.lang.NoSuchMethodException;
+import java.lang.SecurityException;
+import java.lang.IllegalAccessException;
+import java.lang.reflect.InvocationTargetException;
 
 // <<<
 
@@ -37,7 +49,7 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
     public static final int MILLIS_LENGTH = 13;
 
     public static final String DEFAULT_DATETIME_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
-    public static final String DEFAULT_DATE_FORMAT = "YYYY-MM-dd";
+    public static final String DEFAULT_DATE_FORMAT = "yyyy-MM-dd";
     public static final String DEFAULT_TIME_FORMAT = "HH:mm:ss.SSS";
 
     public static final List<String> SUPPORTED_DATA_TYPES = List.of("date", "time", "datetime", "timestamp",
@@ -98,7 +110,6 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
               "[TimestampConverter.converterFor] Supported column. column.name: %s, column.typeName: %s, column.hasDefaultValue: %s, column.defaultValue: %s, column.isOptional: %s%n",
               column.name(), column.typeName(), column.hasDefaultValue(), column.defaultValue(), column.isOptional());
 
-            boolean isTime = "time".equalsIgnoreCase(column.typeName());
             // Use a new SchemaBuilder every time in order to avoid changing "Already set" options
             // in the schema builder between tables.
             registration.register(SchemaBuilder.string().optional(), rawValue -> {
@@ -117,22 +128,128 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
                     return rawValue;
                 }
 
-                System.out.printf("[TimestampConverter.converterFor] rawValue: %s, type: %s", rawValue, rawValue.getClass().getSimpleName());
+                String nativeType = null;
+                Date nativeDateObject = null;
+                Method toDate = null;
 
-                Long millis = getMillis(rawValue.toString(), isTime);
-                if (millis == null)
-                    return rawValue.toString();
+                try {
+                  // java.sql.Date
+                  
+                  toDate = rawValue.getClass().getMethod("valueOf");
 
-                Instant instant = Instant.ofEpochMilli(millis);
+                  if(toDate != null) {
+                    if (toDate.getReturnType().equals(Date.class)) {
+                      nativeDateObject = (Date) toDate.invoke(rawValue);
+                      nativeType = "java.sql.Date";
+                    }
+                  }
+                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                  // nothing
+                  System.out.printf("[TimestampConverter.converterFor] Not java.sql.Date %n");
+                }
+
+                try {
+                  // oracle.sql.DATE, oracle.sql.TIMESTAMP
+
+                  toDate = rawValue.getClass().getMethod("dateValue");
+
+                  if (toDate != null) {
+                    if (toDate.getReturnType().equals(Date.class)) {
+                      nativeDateObject = (Date) toDate.invoke(rawValue);
+                      nativeType = "oracle.sql.DATE/TIMESTAMP";
+                    } 
+                  }
+                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                  // nothing
+                  System.out.printf("[TimestampConverter.converterFor] Not oracle.sql.DATE/TIMESTAMP %n");
+                }
+
+                try {
+                  // java.time.LocalDate
+
+                  toDate = rawValue.getClass().getMethod("atStartOfDay");
+
+                  if (toDate != null) {
+                    if (toDate.getReturnType().equals(ZonedDateTime.class)) {
+                      nativeDateObject = Date.from(
+                        ((ZonedDateTime) toDate.invoke(rawValue, ZoneId.of("UTC"))).toInstant()
+                      );
+                      nativeType = "java.time.LocalDate";
+                    } 
+                  }
+                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                  // nothing
+                  System.out.printf("[TimestampConverter.converterFor] Not java.sql.LocalDate %n");
+                }
+
+                try {
+                  // java.time.LocalDateTime
+
+                  toDate = rawValue.getClass().getMethod("atZone");
+
+                  if (toDate != null) {
+                    if (toDate.getReturnType().equals(ZonedDateTime.class)) {
+                      nativeDateObject = Date.from(
+                        ((ZonedDateTime) toDate.invoke(rawValue, ZoneId.of("UTC"))).toInstant()
+                      );
+                      nativeType = "java.time.LocalDateTime";
+                    } 
+                  }
+                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                  // nothing
+                  System.out.printf("[TimestampConverter.converterFor] Not java.time.LocalDateTime %n");
+                }
+
+                try {
+                  // java.sql.Timestamp
+
+                  toDate = rawValue.getClass().getMethod("toInstant");
+
+                  if (toDate != null) {
+                    if (toDate.getReturnType().equals(Instant.class)) {
+                      nativeDateObject = Date.from(
+                        (Instant) toDate.invoke(rawValue)
+                      );
+                      nativeType = "java.sql.Timestamp";
+                    } 
+                  }
+                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                  // nothing
+                  System.out.printf("[TimestampConverter.converterFor] Not java.sql.Timestamp %n");
+                }
+
+                if (nativeType != null) {
+                                  System.out.printf("[TimestampConverter.converterFor] Native mode: %s", type)
+                } else {
+                  System.out.printf("[TimestampConverter.converterFor] Non-native mode raw value: %s, type: %s%n", rawValue, rawValue.getClass().getSimpleName());
+                }
+
+                Instant instant = null;
+
+                if (nativeDateObject != null) {
+                  instant = nativeDateObject.toInstant();
+                  if (this.debug)
+                      System.out.printf(
+                              "[TimestampConverter.converterFor] Native date conversion: %s",
+                              column.name(), column.typeName(), instant);
+                } else {
+                  Long millis = getMillis(rawValue.toString(), column.typeName().toLowerCase());
+                  if (millis == null)
+                      return rawValue.toString();
+
+                  instant = Instant.ofEpochMilli(millis);
+                  if (this.debug)
+                      System.out.printf(
+                              "[TimestampConverter.converterFor] Before returning conversion. column.name: %s, column.typeName: %s, millis: %d%n",
+                              column.name(), column.typeName(), millis);
+                }
+
                 Date dateObject = Date.from(instant);
-                if (this.debug)
-                    System.out.printf(
-                            "[TimestampConverter.converterFor] Before returning conversion. column.name: %s, column.typeName: %s, millis: %d%n",
-                            column.name(), column.typeName(), millis);
                 switch (column.typeName().toLowerCase()) {
                     case "time":
                         return this.simpleTimeFormatter.format(dateObject);
                     case "date":
+                        System.out.printf("[TimestampConverter.converterFor] Final result: %s -> %s%n", dateObject, this.simpleDateFormatter.format(dateObject));
                         return this.simpleDateFormatter.format(dateObject);
                     default:
                         return this.simpleDatetimeFormatter.format(dateObject);
@@ -141,9 +258,12 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
         }
     }
 
-    private Long getMillis(String timestamp, boolean isTime) {
-        if (timestamp.isBlank())
+    private Long getMillis(String timestamp, String columnType) {
+        if (timestamp.isBlank()) {
+            System.out.printf("[TimestampConverter.getMillis] Null value: %s%n", timestamp);
+
             return null;
+        }
         
         // Oracle fix, oracle stores original function calls to the binlog and we can no longer rely on debezium converter
         // Migrate code from: https://github.com/debezium/debezium/blob/main/debezium-connector-oracle/src/main/java/io/debezium/connector/oracle/OracleValueConverters.java
@@ -177,6 +297,9 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
         final Matcher toTimestampMatcher = TO_TIMESTAMP.matcher(timestamp);
         if (toTimestampMatcher.matches()) {
             String dateText = toTimestampMatcher.group(1);
+
+            System.out.printf("[TimestampConverter.getMillis] Matched TO_TIMESTAMP: %s%n", dateText);
+
             if (dateText.indexOf(" AM") > 0 || dateText.indexOf(" PM") > 0) {
                 dateTime = LocalDateTime.from(TIMESTAMP_AM_PM_SHORT_FORMATTER.parse(dateText.trim()));
             }
@@ -189,8 +312,16 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
         final Matcher toDateMatcher = TO_DATE.matcher(timestamp);
         if (toDateMatcher.matches()) {
             dateTime = LocalDateTime.from(TIMESTAMP_FORMATTER.parse(toDateMatcher.group(1)));
+            
+            System.out.printf("[TimestampConverter.getMillis] Matched TO_DATE: %s -> %s -> %s -> %s%n", 
+              dateTime, toDateMatcher.group(1), 
+              TIMESTAMP_FORMATTER.parse(toDateMatcher.group(1)),
+              dateTime.atZone(GMT_ZONE_ID).toInstant().toEpochMilli());
+
             return dateTime.atZone(GMT_ZONE_ID).toInstant().toEpochMilli();
         }
+
+        System.out.printf("[TimestampConverter.getMillis] Not Oracle format: %s%n", timestamp);
 
         // <<<
 
@@ -198,20 +329,37 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
             return milliFromDateString(timestamp);
         }
 
+        // Native date fix, normally we won't hit here
+
         int excessLength = timestamp.length() - MILLIS_LENGTH;
         long longTimestamp = Long.parseLong(timestamp);
 
-        if (isTime)
+        if (columnType == "time") {
+            System.out.printf("[TimestampConverter.getMillis] Return time directly: %s%n", longTimestamp);
             return longTimestamp;
+        }
 
-        if (excessLength < 0)
-            return longTimestamp * 24 * 60 * 60 * 1000;
+        if (excessLength < -5) {
+          // Debezium-MySQL/PgSQL/SQLServer-Date = Days since epochs
+          System.out.printf("[TimestampConverter.getMillis] Probably day (%s) excessLength = (%s) -> (%s)", longTimestamp, excessLength, longTimestamp * 24 * 60 * 60 * 1000);
+          return longTimestamp * 24 * 60 * 60 * 1000;
+        }
 
-        long millis = longTimestamp / (long) Math.pow(10, excessLength);
-        return millis;
+        if (excessLength > 0) {
+          System.out.printf("[TimestampConverter.getMillis] Removing excessLength (type: %s) = %s -> %s", columnType, longTimestamp, excessLength);
+
+          long millis = longTimestamp / (long) Math.pow(10, excessLength);
+          return millis;
+        }
+        
+        // <<<
+
+        return longTimestamp;
     }
 
     private Long milliFromDateString(String timestamp) {
+        System.out.printf("[TimestampConverter.milliFromDateString] Parsing: %s%n", timestamp);
+
         Matcher matches = regexPattern.matcher(timestamp);
 
         if (matches.find()) {
