@@ -37,6 +37,8 @@ import java.lang.NoSuchMethodException;
 import java.lang.SecurityException;
 import java.lang.IllegalAccessException;
 import java.lang.reflect.InvocationTargetException;
+import java.util.Calendar;
+import java.util.TimeZone;
 
 // <<<
 
@@ -78,6 +80,7 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
 
         this.debug = props.getProperty("debug", "false").equals("true");
 
+        this.simpleDateFormatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         this.simpleDatetimeFormatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         this.simpleTimeFormatter.setTimeZone(TimeZone.getTimeZone("UTC"));
 
@@ -132,94 +135,66 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
                 Date nativeDateObject = null;
                 Method toDate = null;
 
-                try {
-                  // java.sql.Date
-                  
-                  toDate = rawValue.getClass().getMethod("valueOf");
+                if (rawValue instanceof java.sql.Date) {
+                  nativeType = "java.sql.Date";
+                  nativeDateObject = new Date (((java.sql.Date) rawValue).getTime());
+                } else if (rawValue instanceof java.time.LocalDate) {
+                  nativeType = "java.time.LocalDate";
+                  nativeDateObject = Date.from(
+                    ((java.time.LocalDate) rawValue).atStartOfDay(ZoneId.of("UTC")).toInstant()
+                  );
+                } else if (rawValue instanceof java.time.LocalDateTime) {
+                  nativeType = "java.time.LocalDateTime";
+                  nativeDateObject = Date.from(
+                    ((java.time.LocalDateTime) rawValue).atZone(ZoneId.of("UTC")).toInstant()
+                  );
+                } else if (rawValue instanceof Date) {
+                  nativeType = "java.util.Date";
+                  nativeDateObject = (Date) rawValue;
+                } else if (!(rawValue instanceof String)) {
+                  // try {
+                  //   // oracle.sql.DATE, oracle.sql.TIMESTAMP
 
-                  if(toDate != null) {
-                    if (toDate.getReturnType().equals(Date.class)) {
-                      nativeDateObject = (Date) toDate.invoke(rawValue);
-                      nativeType = "java.sql.Date";
+                  //   System.out.printf("%s.???X%n", rawValue.getClass());
+                  //   toDate = rawValue.getClass().getMethod("dateValue");
+                  //   System.out.printf("%s.???X%n", rawValue.getClass().getMethod("dateValue", Calendar.class));
+
+                  //   if (toDate != null) {
+                  //     if (toDate.getReturnType().equals(java.sql.Date.class)) {
+                  //       // dateValue will see time as local time then offset timezone, prevent that
+                  //       java.sql.Date tempDate = (java.sql.Date) toDate.invoke(rawValue, Calendar.getInstance(TimeZone.getTimeZone("GMT")));
+                  //       System.out.printf("@@@@ %s %n", tempDate.getTime());
+                  //       nativeDateObject = new Date (tempDate.getTime());
+                  //       nativeType = "oracle.sql.DATE/TIMESTAMP";
+                  //     } 
+                  //   }
+                  // } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                  //   // nothing
+                  //   //System.out.printf("[TimestampConverter.converterFor] Not oracle.sql.DATE/TIMESTAMP %n");
+                  // }
+
+                  try {
+                    // oracle.sql.DATE, oracle.sql.TIMESTAMP
+
+                    toDate = rawValue.getClass().getMethod("timestampValue", Calendar.class);
+
+                    if (toDate != null) {
+                      if (toDate.getReturnType().equals(java.sql.Timestamp.class)) {
+                        // dateValue will see time as local time then offset timezone, prevent that
+                        java.sql.Timestamp tempTs = (java.sql.Timestamp) toDate.invoke(rawValue, Calendar.getInstance(TimeZone.getTimeZone("GMT")));
+                        System.out.printf("@@@@ %s %n", tempTs.getTime());
+                        nativeDateObject = new Date (tempTs.getTime());
+                        nativeType = "oracle.sql.DATE/TIMESTAMP";
+                      } 
                     }
+                  } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
+                    // nothing
+                    System.out.printf("[TimestampConverter.converterFor] Not oracle.sql.DATE/TIMESTAMP: %s %n", e);
                   }
-                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
-                  // nothing
-                  System.out.printf("[TimestampConverter.converterFor] Not java.sql.Date %n");
-                }
-
-                try {
-                  // oracle.sql.DATE, oracle.sql.TIMESTAMP
-
-                  toDate = rawValue.getClass().getMethod("dateValue");
-
-                  if (toDate != null) {
-                    if (toDate.getReturnType().equals(Date.class)) {
-                      nativeDateObject = (Date) toDate.invoke(rawValue);
-                      nativeType = "oracle.sql.DATE/TIMESTAMP";
-                    } 
-                  }
-                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
-                  // nothing
-                  System.out.printf("[TimestampConverter.converterFor] Not oracle.sql.DATE/TIMESTAMP %n");
-                }
-
-                try {
-                  // java.time.LocalDate
-
-                  toDate = rawValue.getClass().getMethod("atStartOfDay");
-
-                  if (toDate != null) {
-                    if (toDate.getReturnType().equals(ZonedDateTime.class)) {
-                      nativeDateObject = Date.from(
-                        ((ZonedDateTime) toDate.invoke(rawValue, ZoneId.of("UTC"))).toInstant()
-                      );
-                      nativeType = "java.time.LocalDate";
-                    } 
-                  }
-                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
-                  // nothing
-                  System.out.printf("[TimestampConverter.converterFor] Not java.sql.LocalDate %n");
-                }
-
-                try {
-                  // java.time.LocalDateTime
-
-                  toDate = rawValue.getClass().getMethod("atZone");
-
-                  if (toDate != null) {
-                    if (toDate.getReturnType().equals(ZonedDateTime.class)) {
-                      nativeDateObject = Date.from(
-                        ((ZonedDateTime) toDate.invoke(rawValue, ZoneId.of("UTC"))).toInstant()
-                      );
-                      nativeType = "java.time.LocalDateTime";
-                    } 
-                  }
-                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
-                  // nothing
-                  System.out.printf("[TimestampConverter.converterFor] Not java.time.LocalDateTime %n");
-                }
-
-                try {
-                  // java.sql.Timestamp
-
-                  toDate = rawValue.getClass().getMethod("toInstant");
-
-                  if (toDate != null) {
-                    if (toDate.getReturnType().equals(Instant.class)) {
-                      nativeDateObject = Date.from(
-                        (Instant) toDate.invoke(rawValue)
-                      );
-                      nativeType = "java.sql.Timestamp";
-                    } 
-                  }
-                } catch (java.lang.NoSuchMethodException | SecurityException | IllegalAccessException | InvocationTargetException e) {  
-                  // nothing
-                  System.out.printf("[TimestampConverter.converterFor] Not java.sql.Timestamp %n");
                 }
 
                 if (nativeType != null) {
-                                  System.out.printf("[TimestampConverter.converterFor] Native mode: %s", type)
+                  System.out.printf("[TimestampConverter.converterFor] Native mode: %s%n", nativeType);
                 } else {
                   System.out.printf("[TimestampConverter.converterFor] Non-native mode raw value: %s, type: %s%n", rawValue, rawValue.getClass().getSimpleName());
                 }
@@ -230,8 +205,7 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
                   instant = nativeDateObject.toInstant();
                   if (this.debug)
                       System.out.printf(
-                              "[TimestampConverter.converterFor] Native date conversion: %s",
-                              column.name(), column.typeName(), instant);
+                              "[TimestampConverter.converterFor] Native date conversion: %s%n", nativeType);
                 } else {
                   Long millis = getMillis(rawValue.toString(), column.typeName().toLowerCase());
                   if (millis == null)
@@ -247,11 +221,13 @@ public class TimestampConverter implements CustomConverter<SchemaBuilder, Relati
                 Date dateObject = Date.from(instant);
                 switch (column.typeName().toLowerCase()) {
                     case "time":
+                        System.out.printf("[TimestampConverter.converterFor] Final result: %s -> %s%n", dateObject, this.simpleTimeFormatter.format(dateObject));
                         return this.simpleTimeFormatter.format(dateObject);
                     case "date":
                         System.out.printf("[TimestampConverter.converterFor] Final result: %s -> %s%n", dateObject, this.simpleDateFormatter.format(dateObject));
                         return this.simpleDateFormatter.format(dateObject);
                     default:
+                        System.out.printf("[TimestampConverter.converterFor] Final result: %s -> %s%n", dateObject, this.simpleDatetimeFormatter.format(dateObject));
                         return this.simpleDatetimeFormatter.format(dateObject);
                 }
             });

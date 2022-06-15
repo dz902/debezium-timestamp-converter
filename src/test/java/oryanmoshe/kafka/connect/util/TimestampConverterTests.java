@@ -26,6 +26,11 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoField;
 import java.time.ZoneId;
 import java.sql.Date;
+import oracle.sql.DATE;
+import oracle.sql.TIMESTAMP;
+import java.sql.SQLException;
+import java.util.Calendar;
+import java.util.TimeZone;
 
 public class TimestampConverterTests {
     private class MockRegistration<S> implements ConverterRegistration<S> {
@@ -141,6 +146,7 @@ public class TimestampConverterTests {
                         columnType, format, input, tsConverter.strTimeFormat, tsConverter.strDateFormat, props));
         }
     }
+    
     @ParameterizedTest
     @MethodSource("generateNativeDateObjects")
     void converterTestNative(final String columnType, final String format, final Object input, final String expectedResult) {
@@ -176,7 +182,7 @@ public class TimestampConverterTests {
         }
     }
 
-    static Stream<Arguments> generateNativeDateObjects() {
+    static Stream<Arguments> generateNativeDateObjects() throws SQLException {
       // final String columnType, final String format, final String input, final String expectedResult
 
       DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -186,7 +192,9 @@ public class TimestampConverterTests {
           // will given wrong dates for 1000 or 1700 because of calendar adjustments, will have a few days diff
           Arguments.of("date", "yyyy-MM-dd", LocalDate.parse("1900-12-31", dateFormatter), "1900-12-31"),
           Arguments.of("date", "yyyy-MM-dd", LocalDateTime.parse("1882-06-15 10:12:00", dateTimeFormatter), "1882-06-15"),
-          Arguments.of("date", "yyyy-MM-dd", new Date(1640936125000L), "2021-12-31")
+          Arguments.of("date", "yyyy-MM-dd", new java.sql.Date(1640936125000L), "2021-12-31"),
+          Arguments.of("datetime", "yyyy-MM-dd HH.mm.ss", new oracle.sql.DATE(new java.sql.Date(-126359959000L), Calendar.getInstance(TimeZone.getTimeZone("GMT"))), "1965-12-30 12.00.41"),
+          Arguments.of("date", "yyyy-MM-dd HH:mm:ss", new oracle.sql.TIMESTAMP(new java.sql.Timestamp(-469108759000L), Calendar.getInstance(TimeZone.getTimeZone("GMT"))),"1955-02-19 12:00:41")
       );
     }
 
